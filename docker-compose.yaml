@@ -1,0 +1,103 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: fx-scheduler-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: ${TZ}
+
+    ports:
+      - "${POSTGRES_HOST_PORT}:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+    networks:
+      - scheduler_network
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: fx-scheduler-n8n
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_POSTGRESDB_SCHEMA: public
+
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:${N8N_HOST_PORT}/
+      N8N_EDITOR_BASE_URL: http://localhost:${N8N_HOST_PORT}/
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+      TZ: ${TZ}
+
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_SECURE_COOKIE: "false"
+
+    ports:
+      - "${N8N_HOST_PORT}:5678"
+
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows
+
+    networks:
+      - scheduler_network
+
+  optimizer:
+    build:
+      context: ./optimizer
+      dockerfile: Dockerfile
+
+    container_name: fx-scheduler-optimizer
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      TZ: ${TZ}
+
+    ports:
+      - "${OPTIMIZER_HOST_PORT}:8000"
+
+    networks:
+      - scheduler_network
+
+volumes:
+  postgres_data:
+  n8n_data:
+
+networks:
+  scheduler_network:
+    driver: bridge

@@ -1,0 +1,209 @@
+{
+  "name": "P2 - Generate Workforce Schedule",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Trigger Form",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Contract Reference",
+              "fieldName": "contract_reference",
+              "defaultValue": "DEMO-AIR-HUB1-2026",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Work Date",
+              "fieldType": "date",
+              "fieldName": "work_date",
+              "defaultValue": "2026-08-04",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Reason",
+              "fieldName": "trigger_reason",
+              "defaultValue": "Manager schedule generation"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "id": "1e2e804f-f0c3-4a60-9b8f-b9ae7d7a9e2e",
+      "name": "On form submission",
+      "webhookId": "64a9b4be-6904-4129-813f-81112debe616"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "da989dec-13e8-4207-8d3d-9830ab90e2f7",
+              "name": "contract_reference",
+              "value": "={{ $json.contract_reference }}",
+              "type": "string"
+            },
+            {
+              "id": "85d5b799-4078-4b81-a13e-8b2bdb819b40",
+              "name": "work_date",
+              "value": "={{ $json.work_date }}",
+              "type": "string"
+            },
+            {
+              "id": "2d1bbdc4-a309-4f1a-bbd5-8482182c9a7b",
+              "name": "trigger_reason",
+              "value": "={{ $json.trigger_reason || 'Manager schedule generation' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        208,
+        0
+      ],
+      "id": "f305857c-366e-4f11-9e59-6ec759a8bc72",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://optimizer:8000/optimize",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contract_reference\": \"{{ $json.contract_reference }}\",\n  \"work_date\": \"{{ $json.work_date }}\",\n  \"trigger_reason\": \"{{ $json.trigger_reason }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        416,
+        0
+      ],
+      "id": "b9ba5a9d-5c06-4990-83d0-112999699677",
+      "name": "Generate Schedule"
+    },
+    {
+      "parameters": {
+        "url": "=http://optimizer:8000/runs/{{ $json.schedule_run_id }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        624,
+        0
+      ],
+      "id": "04becd4c-1ad8-480f-b061-0cb06bd24a96",
+      "name": "Get Stored Schedule"
+    },
+    {
+      "parameters": {
+        "jsCode": "const run = $json;\n\nconst escapeHtml = (value) =>\n  String(value ?? '')\n    .replaceAll('&', '&amp;')\n    .replaceAll('<', '&lt;')\n    .replaceAll('>', '&gt;')\n    .replaceAll('\"', '&quot;')\n    .replaceAll(\"'\", '&#039;');\n\nconst number = (\n  value,\n  minimumFractionDigits = 0,\n  maximumFractionDigits = 2,\n) => {\n  if (value === null || value === undefined || value === '') {\n    return '—';\n  }\n\n  const numericValue = Number(value);\n\n  if (!Number.isFinite(numericValue)) {\n    return escapeHtml(value);\n  }\n\n  return numericValue.toLocaleString('en-GB', {\n    minimumFractionDigits,\n    maximumFractionDigits,\n  });\n};\n\nconst money = (value) => number(value, 2, 2);\n\nconst percentage = (value) => {\n  if (value === null || value === undefined || value === '') {\n    return '—';\n  }\n\n  return `${number(value, 2, 2)}%`;\n};\n\nconst formatDate = (value) => {\n  if (!value) {\n    return '—';\n  }\n\n  const parsed = new Date(`${value}T00:00:00`);\n\n  if (Number.isNaN(parsed.getTime())) {\n    return escapeHtml(value);\n  }\n\n  return parsed.toLocaleDateString('en-GB', {\n    day: '2-digit',\n    month: 'short',\n    year: 'numeric',\n  });\n};\n\nconst assignments = Array.isArray(run.assignments)\n  ? run.assignments\n  : [];\n\nconst metrics = Array.isArray(run.metrics)\n  ? run.metrics\n  : [];\n\nconst permanentAssignments = assignments.filter(\n  (assignment) => assignment.contract_type === 'PERMANENT',\n);\n\nconst contractorAssignments = assignments.filter(\n  (assignment) => assignment.contract_type === 'CONTRACTOR',\n);\n\nconst uniqueEmployeeCount = new Set(\n  assignments.map((assignment) => assignment.employee_number),\n).size;\n\nconst totalScheduledHours = assignments.reduce(\n  (sum, assignment) =>\n    sum + Number(assignment.assigned_hours || 0),\n  0,\n);\n\nconst totalPermanentCost = metrics.reduce(\n  (sum, metric) =>\n    sum + Number(metric.permanent_cost || 0),\n  0,\n);\n\nconst totalContractorCost = metrics.reduce(\n  (sum, metric) =>\n    sum + Number(metric.contractor_cost || 0),\n  0,\n);\n\nconst averageCoverage =\n  metrics.length > 0\n    ? metrics.reduce(\n        (sum, metric) =>\n          sum + Number(metric.coverage_percent || 0),\n        0,\n      ) / metrics.length\n    : 0;\n\nconst allWithinTolerance =\n  metrics.length > 0 &&\n  metrics.every(\n    (metric) => metric.within_tolerance === true,\n  );\n\nconst statusClass =\n  run.status === 'COMPLETED'\n    ? 'success'\n    : run.status === 'INFEASIBLE'\n      ? 'danger'\n      : 'warning';\n\nconst statusLabel =\n  run.status === 'COMPLETED'\n    ? 'Schedule completed'\n    : run.status === 'INFEASIBLE'\n      ? 'Schedule infeasible'\n      : run.status || 'Unknown';\n\nconst coverageClass =\n  metrics.length === 0\n    ? 'neutral'\n    : allWithinTolerance\n      ? 'success-soft'\n      : 'danger-soft';\n\nconst assignmentRows = assignments\n  .map((assignment) => {\n    const rowClass =\n      assignment.contract_type === 'CONTRACTOR'\n        ? 'contractor-row'\n        : 'permanent-row';\n\n    const contractClass =\n      assignment.contract_type === 'CONTRACTOR'\n        ? 'contractor-badge'\n        : 'permanent-badge';\n\n    return `\n      <tr class=\"${rowClass}\">\n        <td>${formatDate(assignment.work_date)}</td>\n\n        <td>\n          <span class=\"shift-badge\">\n            ${escapeHtml(assignment.shift_code)}\n          </span>\n        </td>\n\n        <td>${escapeHtml(assignment.time_of_day)}</td>\n\n        <td class=\"employee-number\">\n          ${escapeHtml(assignment.employee_number)}\n        </td>\n\n        <td class=\"employee-name\">\n          ${escapeHtml(assignment.full_name)}\n        </td>\n\n        <td>\n          <span class=\"contract-badge ${contractClass}\">\n            ${escapeHtml(assignment.contract_type)}\n          </span>\n        </td>\n\n        <td class=\"number\">\n          ${number(assignment.assigned_hours, 2, 2)}\n        </td>\n\n        <td class=\"number\">\n          ${money(assignment.hourly_rate)}\n        </td>\n\n        <td class=\"number strong\">\n          ${money(assignment.assignment_cost)}\n        </td>\n      </tr>\n    `;\n  })\n  .join('');\n\nconst metricRows = metrics\n  .map((metric) => {\n    const toleranceClass = metric.within_tolerance\n      ? 'tolerance-ok'\n      : 'tolerance-failed';\n\n    const toleranceLabel = metric.within_tolerance\n      ? 'Within tolerance'\n      : 'Outside tolerance';\n\n    return `\n      <tr>\n        <td>${formatDate(metric.demand_date)}</td>\n\n        <td>\n          <span class=\"period-badge\">\n            ${escapeHtml(metric.time_of_day)}\n          </span>\n        </td>\n\n        <td class=\"number\">\n          ${number(metric.required_hours, 2, 2)}\n        </td>\n\n        <td class=\"number\">\n          ${number(metric.scheduled_hours, 2, 2)}\n        </td>\n\n        <td class=\"number strong\">\n          ${percentage(metric.coverage_percent)}\n        </td>\n\n        <td class=\"number\">\n          ${number(metric.permanent_hours, 2, 2)}\n        </td>\n\n        <td class=\"number\">\n          ${number(metric.contractor_hours, 2, 2)}\n        </td>\n\n        <td>\n          <span class=\"tolerance-badge ${toleranceClass}\">\n            ${toleranceLabel}\n          </span>\n        </td>\n      </tr>\n    `;\n  })\n  .join('');\n\nconst assignmentsSection =\n  assignments.length > 0\n    ? `\n      <section class=\"card\">\n        <div class=\"section-header\">\n          <div>\n            <p class=\"eyebrow\">Resource allocation</p>\n            <h2>Employee assignments</h2>\n          </div>\n\n          <div class=\"section-stat\">\n            ${uniqueEmployeeCount}\n            employee${uniqueEmployeeCount === 1 ? '' : 's'}\n          </div>\n        </div>\n\n        <div class=\"table-wrapper\">\n          <table>\n            <thead>\n              <tr>\n                <th>Date</th>\n                <th>Shift</th>\n                <th>Period</th>\n                <th>Employee</th>\n                <th>Name</th>\n                <th>Contract</th>\n                <th class=\"number\">Hours</th>\n                <th class=\"number\">Hourly rate</th>\n                <th class=\"number\">Cost</th>\n              </tr>\n            </thead>\n\n            <tbody>\n              ${assignmentRows}\n            </tbody>\n          </table>\n        </div>\n\n        <div class=\"legend\">\n          <span>\n            <span class=\"legend-dot permanent-dot\"></span>\n            Permanent employee\n          </span>\n\n          <span>\n            <span class=\"legend-dot contractor-dot\"></span>\n            Contractor\n          </span>\n        </div>\n      </section>\n    `\n    : `\n      <section class=\"card\">\n        <div class=\"section-header\">\n          <div>\n            <p class=\"eyebrow\">Resource allocation</p>\n            <h2>Employee assignments</h2>\n          </div>\n        </div>\n\n        <div class=\"empty-state\">\n          <div class=\"empty-icon\">!</div>\n\n          <div>\n            <h3>No assignments were produced</h3>\n\n            <p>\n              The optimiser could not create a schedule that\n              satisfies all demand and eligibility constraints\n              for this run.\n            </p>\n          </div>\n        </div>\n      </section>\n    `;\n\nconst metricsSection =\n  metrics.length > 0\n    ? `\n      <section class=\"card\">\n        <div class=\"section-header\">\n          <div>\n            <p class=\"eyebrow\">Demand fulfilment</p>\n            <h2>Coverage</h2>\n          </div>\n\n          <div class=\"section-stat ${coverageClass}\">\n            ${\n              allWithinTolerance\n                ? 'All periods within tolerance'\n                : 'Review required'\n            }\n          </div>\n        </div>\n\n        <div class=\"table-wrapper\">\n          <table>\n            <thead>\n              <tr>\n                <th>Date</th>\n                <th>Period</th>\n                <th class=\"number\">Required</th>\n                <th class=\"number\">Scheduled</th>\n                <th class=\"number\">Coverage</th>\n                <th class=\"number\">Permanent</th>\n                <th class=\"number\">Contractor</th>\n                <th>Result</th>\n              </tr>\n            </thead>\n\n            <tbody>\n              ${metricRows}\n            </tbody>\n          </table>\n        </div>\n      </section>\n    `\n    : '';\n\nconst html = `\n<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n\n  <meta\n    name=\"viewport\"\n    content=\"width=device-width, initial-scale=1\"\n  >\n\n  <title>\n    Workforce Schedule Run\n    ${escapeHtml(run.schedule_run_id)}\n  </title>\n\n  <style>\n    :root {\n      color-scheme: light;\n\n      --page-bg: #eef2f6;\n      --card-bg: #ffffff;\n      --surface-muted: #f8fafc;\n      --border: #dbe3ec;\n\n      --text-main: #172033;\n      --text-muted: #64748b;\n      --text-subtle: #94a3b8;\n\n      --accent: #1d4ed8;\n\n      --success-bg: #dcfce7;\n      --success-text: #166534;\n      --success-border: #bbf7d0;\n\n      --danger-bg: #fee2e2;\n      --danger-text: #991b1b;\n      --danger-border: #fecaca;\n\n      --warning-bg: #fef3c7;\n      --warning-text: #92400e;\n      --warning-border: #fde68a;\n\n      --permanent-bg: #eff6ff;\n      --permanent-text: #1d4ed8;\n      --permanent-border: #bfdbfe;\n\n      --contractor-bg: #fff7ed;\n      --contractor-text: #9a3412;\n      --contractor-border: #fed7aa;\n\n      --shadow:\n        0 1px 2px rgba(15, 23, 42, 0.04),\n        0 8px 28px rgba(15, 23, 42, 0.08);\n    }\n\n    * {\n      box-sizing: border-box;\n    }\n\n    body {\n      margin: 0;\n      min-height: 100vh;\n      padding: 32px;\n\n      background:\n        radial-gradient(\n          circle at top left,\n          rgba(219, 234, 254, 0.65),\n          transparent 32%\n        ),\n        var(--page-bg);\n\n      color: var(--text-main);\n\n      font-family:\n        Inter,\n        ui-sans-serif,\n        system-ui,\n        -apple-system,\n        BlinkMacSystemFont,\n        \"Segoe UI\",\n        sans-serif;\n\n      line-height: 1.45;\n    }\n\n    .container {\n      width: min(96vw, 1680px);\n      margin: 0 auto;\n    }\n\n    .card {\n      margin-bottom: 20px;\n      overflow: hidden;\n\n      border: 1px solid var(--border);\n      border-radius: 16px;\n\n      background: var(--card-bg);\n      box-shadow: var(--shadow);\n    }\n\n    .hero {\n      padding: 26px 28px;\n    }\n\n    .hero-top {\n      display: flex;\n      align-items: flex-start;\n      justify-content: space-between;\n      gap: 24px;\n    }\n\n    .eyebrow {\n      margin: 0 0 4px;\n\n      color: var(--accent);\n\n      font-size: 12px;\n      font-weight: 800;\n      letter-spacing: 0.1em;\n      text-transform: uppercase;\n    }\n\n    h1,\n    h2,\n    h3,\n    p {\n      margin-top: 0;\n    }\n\n    h1 {\n      margin-bottom: 6px;\n\n      font-size: clamp(28px, 3vw, 42px);\n      line-height: 1.1;\n      letter-spacing: -0.03em;\n    }\n\n    h2 {\n      margin-bottom: 0;\n\n      font-size: 22px;\n      letter-spacing: -0.015em;\n    }\n\n    h3 {\n      margin-bottom: 6px;\n      font-size: 17px;\n    }\n\n    .subtitle {\n      margin-bottom: 0;\n      color: var(--text-muted);\n      font-size: 15px;\n    }\n\n    .status {\n      display: inline-flex;\n      align-items: center;\n      flex-shrink: 0;\n      gap: 8px;\n\n      padding: 9px 14px;\n\n      border: 1px solid transparent;\n      border-radius: 999px;\n\n      font-size: 13px;\n      font-weight: 800;\n      white-space: nowrap;\n    }\n\n    .status-dot {\n      width: 8px;\n      height: 8px;\n\n      border-radius: 50%;\n      background: currentColor;\n    }\n\n    .success {\n      border-color: var(--success-border);\n      background: var(--success-bg);\n      color: var(--success-text);\n    }\n\n    .danger {\n      border-color: var(--danger-border);\n      background: var(--danger-bg);\n      color: var(--danger-text);\n    }\n\n    .warning {\n      border-color: var(--warning-border);\n      background: var(--warning-bg);\n      color: var(--warning-text);\n    }\n\n    .context-grid {\n      display: grid;\n      grid-template-columns: repeat(6, minmax(0, 1fr));\n      gap: 12px;\n\n      margin-top: 24px;\n    }\n\n    .context-item {\n      min-width: 0;\n      padding: 13px 14px;\n\n      border: 1px solid #e7edf4;\n      border-radius: 11px;\n\n      background: var(--surface-muted);\n    }\n\n    .label {\n      display: block;\n      margin-bottom: 5px;\n\n      color: var(--text-muted);\n\n      font-size: 11px;\n      font-weight: 800;\n      letter-spacing: 0.06em;\n      text-transform: uppercase;\n    }\n\n    .value {\n      overflow-wrap: anywhere;\n\n      color: var(--text-main);\n\n      font-size: 15px;\n      font-weight: 750;\n    }\n\n    .kpi-grid {\n      display: grid;\n      grid-template-columns: repeat(7, minmax(0, 1fr));\n      gap: 12px;\n\n      margin-top: 18px;\n    }\n\n    .kpi {\n      position: relative;\n\n      min-height: 112px;\n      padding: 17px;\n      overflow: hidden;\n\n      border: 1px solid #e4eaf1;\n      border-radius: 12px;\n\n      background: #ffffff;\n    }\n\n    .kpi::after {\n      position: absolute;\n      right: -20px;\n      bottom: -28px;\n\n      width: 82px;\n      height: 82px;\n\n      border-radius: 50%;\n\n      background: rgba(29, 78, 216, 0.05);\n      content: \"\";\n    }\n\n    .kpi-title {\n      position: relative;\n      z-index: 1;\n\n      color: var(--text-muted);\n\n      font-size: 11px;\n      font-weight: 800;\n      letter-spacing: 0.055em;\n      text-transform: uppercase;\n    }\n\n    .kpi-value {\n      position: relative;\n      z-index: 1;\n\n      margin-top: 12px;\n\n      font-size: clamp(23px, 2.2vw, 32px);\n      font-weight: 800;\n      line-height: 1;\n      letter-spacing: -0.025em;\n    }\n\n    .kpi-note {\n      position: relative;\n      z-index: 1;\n\n      margin-top: 8px;\n\n      color: var(--text-muted);\n      font-size: 12px;\n    }\n\n    .section-header {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 20px;\n\n      padding: 21px 24px 17px;\n\n      border-bottom: 1px solid var(--border);\n    }\n\n    .section-stat {\n      padding: 7px 11px;\n\n      border-radius: 999px;\n\n      background: var(--surface-muted);\n      color: var(--text-muted);\n\n      font-size: 12px;\n      font-weight: 750;\n      white-space: nowrap;\n    }\n\n    .success-soft {\n      background: var(--success-bg);\n      color: var(--success-text);\n    }\n\n    .danger-soft {\n      background: var(--danger-bg);\n      color: var(--danger-text);\n    }\n\n    .neutral {\n      background: var(--surface-muted);\n      color: var(--text-muted);\n    }\n\n    .table-wrapper {\n      width: 100%;\n      overflow-x: auto;\n\n      -webkit-overflow-scrolling: touch;\n    }\n\n    table {\n      width: 100%;\n      min-width: 980px;\n\n      border-collapse: collapse;\n      table-layout: auto;\n    }\n\n    thead {\n      background: var(--surface-muted);\n    }\n\n    th,\n    td {\n      padding: 12px 15px;\n\n      border-bottom: 1px solid #e8edf3;\n\n      text-align: left;\n      vertical-align: middle;\n      white-space: nowrap;\n    }\n\n    th {\n      color: #475569;\n\n      font-size: 11px;\n      font-weight: 850;\n      letter-spacing: 0.045em;\n      text-transform: uppercase;\n    }\n\n    td {\n      color: #263247;\n      font-size: 13px;\n    }\n\n    tbody tr:last-child td {\n      border-bottom: 0;\n    }\n\n    tbody tr:hover {\n      background: #fbfdff;\n    }\n\n    .number {\n      text-align: right;\n      font-variant-numeric: tabular-nums;\n    }\n\n    .strong {\n      font-weight: 800;\n    }\n\n    .employee-number {\n      font-family:\n        \"SFMono-Regular\",\n        Consolas,\n        \"Liberation Mono\",\n        monospace;\n\n      font-weight: 750;\n    }\n\n    .employee-name {\n      min-width: 160px;\n      font-weight: 700;\n    }\n\n    .shift-badge,\n    .period-badge,\n    .contract-badge,\n    .tolerance-badge {\n      display: inline-flex;\n      align-items: center;\n      justify-content: center;\n\n      border: 1px solid transparent;\n      border-radius: 999px;\n\n      font-size: 11px;\n      font-weight: 800;\n      white-space: nowrap;\n    }\n\n    .shift-badge {\n      min-width: 38px;\n      padding: 5px 8px;\n\n      border-color: #cbd5e1;\n      background: #f8fafc;\n      color: #334155;\n    }\n\n    .period-badge {\n      padding: 5px 9px;\n\n      border-color: #dbeafe;\n      background: #eff6ff;\n      color: #1e40af;\n    }\n\n    .contract-badge {\n      padding: 5px 9px;\n    }\n\n    .permanent-badge {\n      border-color: var(--permanent-border);\n      background: var(--permanent-bg);\n      color: var(--permanent-text);\n    }\n\n    .contractor-badge {\n      border-color: var(--contractor-border);\n      background: var(--contractor-bg);\n      color: var(--contractor-text);\n    }\n\n    .contractor-row {\n      background: rgba(255, 247, 237, 0.38);\n    }\n\n    .tolerance-badge {\n      padding: 5px 9px;\n    }\n\n    .tolerance-ok {\n      border-color: var(--success-border);\n      background: var(--success-bg);\n      color: var(--success-text);\n    }\n\n    .tolerance-failed {\n      border-color: var(--danger-border);\n      background: var(--danger-bg);\n      color: var(--danger-text);\n    }\n\n    .legend {\n      display: flex;\n      flex-wrap: wrap;\n      gap: 18px;\n\n      padding: 13px 24px 16px;\n\n      border-top: 1px solid var(--border);\n\n      background: #fbfcfe;\n      color: var(--text-muted);\n\n      font-size: 12px;\n    }\n\n    .legend span {\n      display: inline-flex;\n      align-items: center;\n      gap: 7px;\n    }\n\n    .legend-dot {\n      width: 9px;\n      height: 9px;\n      border-radius: 50%;\n    }\n\n    .permanent-dot {\n      background: #60a5fa;\n    }\n\n    .contractor-dot {\n      background: #fb923c;\n    }\n\n    .empty-state {\n      display: flex;\n      align-items: flex-start;\n      gap: 16px;\n\n      margin: 22px;\n      padding: 20px;\n\n      border: 1px solid var(--warning-border);\n      border-radius: 12px;\n\n      background: #fffaf0;\n      color: var(--warning-text);\n    }\n\n    .empty-state p {\n      margin-bottom: 0;\n      color: #9a5b16;\n    }\n\n    .empty-icon {\n      display: grid;\n      width: 34px;\n      height: 34px;\n      flex: 0 0 34px;\n      place-items: center;\n\n      border-radius: 50%;\n\n      background: var(--warning-bg);\n\n      font-weight: 900;\n    }\n\n    .footer-note {\n      padding: 2px 4px 14px;\n\n      color: var(--text-subtle);\n\n      font-size: 11px;\n      text-align: center;\n    }\n\n    @media (max-width: 1250px) {\n      .context-grid {\n        grid-template-columns:\n          repeat(3, minmax(0, 1fr));\n      }\n\n      .kpi-grid {\n        grid-template-columns:\n          repeat(4, minmax(0, 1fr));\n      }\n    }\n\n    @media (max-width: 760px) {\n      body {\n        padding: 14px;\n      }\n\n      .container {\n        width: 100%;\n      }\n\n      .hero {\n        padding: 20px;\n      }\n\n      .hero-top,\n      .section-header {\n        align-items: flex-start;\n        flex-direction: column;\n      }\n\n      .context-grid {\n        grid-template-columns:\n          repeat(2, minmax(0, 1fr));\n      }\n\n      .kpi-grid {\n        grid-template-columns:\n          repeat(2, minmax(0, 1fr));\n      }\n\n      .section-header {\n        padding: 18px;\n      }\n    }\n\n    @media (max-width: 440px) {\n      .context-grid,\n      .kpi-grid {\n        grid-template-columns: 1fr;\n      }\n    }\n\n    @media print {\n      body {\n        padding: 0;\n        background: #ffffff;\n      }\n\n      .container {\n        width: 100%;\n        max-width: none;\n      }\n\n      .card {\n        box-shadow: none;\n        break-inside: avoid;\n      }\n\n      .table-wrapper {\n        overflow: visible;\n      }\n\n      table {\n        min-width: 0;\n      }\n\n      th,\n      td {\n        white-space: normal;\n      }\n    }\n  </style>\n</head>\n\n<body>\n  <main class=\"container\">\n    <section class=\"card hero\">\n      <div class=\"hero-top\">\n        <div>\n          <p class=\"eyebrow\">\n            Aviation workforce optimisation\n          </p>\n\n          <h1>Workforce Schedule</h1>\n\n          <p class=\"subtitle\">\n            Deterministic schedule generated from eligibility,\n            demand and cost constraints.\n          </p>\n        </div>\n\n        <span class=\"status ${statusClass}\">\n          <span class=\"status-dot\"></span>\n          ${escapeHtml(statusLabel)}\n        </span>\n      </div>\n\n      <div class=\"context-grid\">\n        <div class=\"context-item\">\n          <span class=\"label\">Run ID</span>\n\n          <div class=\"value\">\n            ${escapeHtml(run.schedule_run_id)}\n          </div>\n        </div>\n\n        <div class=\"context-item\">\n          <span class=\"label\">Contract</span>\n\n          <div class=\"value\">\n            ${escapeHtml(run.contract_reference)}\n          </div>\n        </div>\n\n        <div class=\"context-item\">\n          <span class=\"label\">Customer</span>\n\n          <div class=\"value\">\n            ${escapeHtml(run.customer_name)}\n          </div>\n        </div>\n\n        <div class=\"context-item\">\n          <span class=\"label\">Station</span>\n\n          <div class=\"value\">\n            ${escapeHtml(run.station_code)}\n          </div>\n        </div>\n\n        <div class=\"context-item\">\n          <span class=\"label\">Planning date</span>\n\n          <div class=\"value\">\n            ${formatDate(run.planning_from)}\n          </div>\n        </div>\n\n        <div class=\"context-item\">\n          <span class=\"label\">Solver result</span>\n\n          <div class=\"value\">\n            ${escapeHtml(run.solver_status)}\n          </div>\n        </div>\n      </div>\n\n      <div class=\"kpi-grid\">\n        <div class=\"kpi\">\n          <div class=\"kpi-title\">\n            Employees used\n          </div>\n\n          <div class=\"kpi-value\">\n            ${uniqueEmployeeCount}\n          </div>\n\n          <div class=\"kpi-note\">\n            ${number(totalScheduledHours, 2, 2)}\n            scheduled hours\n          </div>\n        </div>\n\n        <div class=\"kpi\">\n          <div class=\"kpi-title\">\n            Permanent\n          </div>\n\n          <div class=\"kpi-value\">\n            ${permanentAssignments.length}\n          </div>\n\n          <div class=\"kpi-note\">\n            ${money(totalPermanentCost)}\n            labour cost\n          </div>\n        </div>\n\n        <div class=\"kpi\">\n          <div class=\"kpi-title\">\n            Contractors\n          </div>\n\n          <div class=\"kpi-value\">\n            ${contractorAssignments.length}\n          </div>\n\n          <div class=\"kpi-note\">\n            ${money(totalContractorCost)}\n            labour cost\n          </div>\n        </div>\n\n        <div class=\"kpi\">\n          <div class=\"kpi-title\">\n            Average coverage\n          </div>\n\n          <div class=\"kpi-value\">\n            ${\n              metrics.length > 0\n                ? percentage(averageCoverage)\n                : '—'\n            }\n          </div>\n\n          <div class=\"kpi-note\">\n            ${\n              metrics.length > 0\n                ? allWithinTolerance\n                  ? 'All periods within tolerance'\n                  : 'One or more periods require review'\n                : 'No coverage metrics'\n            }\n          </div>\n        </div>\n\n        <div class=\"kpi\">\n          <div class=\"kpi-title\">\n            Total cost\n          </div>\n\n          <div class=\"kpi-value\">\n            ${money(run.total_cost)}\n          </div>\n\n          <div class=\"kpi-note\">\n            Scheduled labour cost\n          </div>\n        </div>\n\n        <div class=\"kpi\">\n          <div class=\"kpi-title\">\n            Execution time\n          </div>\n\n          <div class=\"kpi-value\">\n            ${\n              run.execution_time_ms === null ||\n              run.execution_time_ms === undefined\n                ? '—'\n                : `${number(run.execution_time_ms)} ms`\n            }\n          </div>\n\n          <div class=\"kpi-note\">\n            Optimiser runtime\n          </div>\n        </div>\n\n        <div class=\"kpi\">\n          <div class=\"kpi-title\">\n            Schedule result\n          </div>\n\n          <div class=\"kpi-value\">\n            ${\n              run.status === 'COMPLETED'\n                ? 'Ready'\n                : run.status === 'INFEASIBLE'\n                  ? 'Blocked'\n                  : escapeHtml(run.status || '—')\n            }\n          </div>\n\n          <div class=\"kpi-note\">\n            ${\n              escapeHtml(\n                run.trigger_reason ||\n                'No trigger reason supplied',\n              )\n            }\n          </div>\n        </div>\n      </div>\n    </section>\n\n    ${metricsSection}\n    ${assignmentsSection}\n\n    <div class=\"footer-note\">\n      Schedule run\n      ${escapeHtml(run.schedule_run_id)}\n      ·\n      ${escapeHtml(run.contract_reference)}\n      ·\n      ${formatDate(run.planning_from)}\n    </div>\n  </main>\n</body>\n</html>\n`;\n\nreturn [\n  {\n    json: {\n      schedule_run_id: run.schedule_run_id,\n      status: run.status,\n      html,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        0
+      ],
+      "id": "fb25f571-040a-4b86-8364-5fb561d5b7b6",
+      "name": "Build Schedule Report"
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "showText",
+        "responseText": "={{ $json.html }}"
+      },
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1040,
+        0
+      ],
+      "id": "5956b6e9-a952-491e-80ec-b513e86ee709",
+      "name": "Form",
+      "webhookId": "79aca960-bb42-42ff-8093-34bd552cac46"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Generate Schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Schedule": {
+      "main": [
+        [
+          {
+            "node": "Get Stored Schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Stored Schedule": {
+      "main": [
+        [
+          {
+            "node": "Build Schedule Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Schedule Report": {
+      "main": [
+        [
+          {
+            "node": "Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "aad0e7a6-5caf-4cb7-9b30-60e740a33d4a",
+  "meta": {
+    "instanceId": "f016e55b1add154236687e3eb74bc5331aeb27a7ba8c9774a327448ba37b5799"
+  },
+  "nodeGroups": [],
+  "id": "a0DLAes2pVT9THOT",
+  "tags": []
+}
